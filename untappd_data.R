@@ -21,13 +21,12 @@ theme_update(plot.title = element_text(hjust = 0.5))
 #################################################################################
 
 ## read in data
-dat <- read.csv("data/checkin-report_05_27_17.csv", 
+dat <- read.csv("data/checkin-report_05_28_17.csv", 
                 header = TRUE, stringsAsFactors = FALSE)
 
 #################################################################################
 ## Process data##################################################################
 #################################################################################
-
 
 ## split feature beer_type into two separate categories
 ## also remove trailing spaces
@@ -35,10 +34,11 @@ dat$beer_category <- sub("\\s+$", "", sapply(strsplit(dat$beer_type, split = "-"
 dat$beer_subcategory <- sapply(strsplit(dat$beer_type, split = "-"), "[", 2)
 
 ## create grouping variable for beer category
-## all beers with over 5 unique beers get their own category, others grouped as "other
+## all beers with over 5 unique beers get their own category, others grouped as "other"
+## Pilsners, Marzens, Bocks are types of pale lagers
 dat$beer_category_groups <- ifelse(dat$beer_category == "IPA", "IPA",
                             ifelse(dat$beer_category %in% c("Stout", 'Porter'), "Stout/Porter",
-                            ifelse(dat$beer_category == "Lager", "Lager",
+                            ifelse(dat$beer_category %in% c("Lager", "Pilsner", "Märzen"), "Lager",
                             ifelse(dat$beer_category == "Pale Ale", "Pale Ale",
                             ifelse(dat$beer_category %in% "Saison / Farmhouse Ale", "Saison",
                             ifelse(dat$beer_category %in% c("Sour", "Lambic"), "Sour",
@@ -241,14 +241,13 @@ category_variables[which(category_variables$model_name == "Beer Category Model")
   order(category_variables[which(category_variables$model_name == "Beer Category Model"),]$coefficient)])
 
 # Specify the width of your confidence intervals
-interval1 <- -qnorm((1-0.9)/2)  # 90% multiplier
-interval2 <- -qnorm((1-0.95)/2)  # 95% multiplier
+interval <- -qnorm((1-0.95)/2)  # 95% multiplier
 
 pdf("results/beer_type_effects.pdf", height = 4, width = 7)
 ggplot(category_variables, aes(colour = model_name)) +
   geom_hline(yintercept = 0, colour = gray(1/2), lty = 2) +
-  geom_linerange(aes(x = variable, ymin = coefficient - se*interval1,
-                     ymax = coefficient + se*interval1),
+  geom_linerange(aes(x = variable, ymin = coefficient - se*interval,
+                     ymax = coefficient + se*interval),
                  lwd = 1, position = position_dodge(width = 1/2)) +
   coord_flip() + 
   ggtitle("Relative Effect of Beer Type on Ratings\n(reference group: IPA)") +
