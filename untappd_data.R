@@ -12,6 +12,8 @@ setwd("~/Documents/workspace/beer")
 ## load required libaries
 library(ggplot2)
 library(dplyr)
+library(randomForest)
+library(scales)
 
 ## center ggplot2 titles by default
 theme_update(plot.title = element_text(hjust = 0.5))
@@ -21,11 +23,11 @@ theme_update(plot.title = element_text(hjust = 0.5))
 #################################################################################
 
 ## read in data
-dat <- read.csv("data/checkin-report_05_28_17.csv", 
+dat <- read.csv("data/573638fd2d25620be1fb5d7e5b64ca70.csv", 
                 header = TRUE, stringsAsFactors = FALSE)
 
 #################################################################################
-## Process data##################################################################
+## Process data #################################################################
 #################################################################################
 
 ## split feature beer_type into two separate categories
@@ -34,13 +36,15 @@ dat$beer_category <- sub("\\s+$", "", sapply(strsplit(dat$beer_type, split = "-"
 dat$beer_subcategory <- sapply(strsplit(dat$beer_type, split = "-"), "[", 2)
 
 ## create grouping variable for beer category
-## all beers with over 5 unique beers get their own category, others grouped as "other"
 ## Pilsners, Marzens, Bocks are types of pale lagers
-dat$beer_category_groups <- ifelse(dat$beer_category == "IPA", "IPA",
-                            ifelse(dat$beer_category %in% c("Stout", 'Porter'), "Stout/Porter",
-                            ifelse(dat$beer_category %in% c("Lager", "Pilsner", "Märzen"), "Lager",
-                            ifelse(dat$beer_category == "Pale Ale", "Pale Ale",
-                            ifelse(dat$beer_category %in% "Saison / Farmhouse Ale", "Saison",
+dat$beer_category_groups <- ifelse(dat$beer_category %in% c("IPA", "Stout", "Porter", 
+                                                            "Pale Ale", "Fruit Beer",
+                                                            "Kolsh", "Blonde Ale", "Märzen",
+                                                            "Lager", "Red Ale"),
+                                                            dat$beer_category,
+                                   
+                            ifelse(dat$beer_category %in% c("Saison / Farmhouse Ale"), "Saison",
+                            ifelse(dat$beer_category %in% c("Pumpkin / Yam Beer"), "Pumpkin Beer",
                             ifelse(dat$beer_category %in% c("Sour", "Lambic"), "Sour",
                             ifelse(dat$beer_category %in% c("Belgian Dubbel",
                                                             "Belgian Tripel",
@@ -48,11 +52,12 @@ dat$beer_category_groups <- ifelse(dat$beer_category == "IPA", "IPA",
                                                             "Belgian Strong Golden Ale"), "Belgian",
                             ## note: leaving lambics out of wheatbeer category, since to me, they taste
                             ## categorically different (though also, witbiers and wheat ales are pretty different),
+                            ## and seem more like sours than wheats
                             ## so eventually probably want to split these up if I ever get enough data per subgroup
                             ifelse(dat$beer_category %in% c("Witbier",
                                                             "Hefeweizen",
                                                             "Pale Wheat Ale"), "Wheat beer (witbier, hefeweizen, etc)",
-                            "Other Beer Type"))))))))
+                                   "Other Beer Type"))))))
                            
 ## treat beer_category as a factor, ordered by frequency of consumption
 dat$beer_category <- factor(dat$beer_category,
@@ -62,6 +67,34 @@ dat$beer_category <- factor(dat$beer_category,
 ## of datapoint creation
 dat$created_at_date <- as.Date(sapply(strsplit(dat$created_at, split = " "), "[", 1), 
                                format = "%m/%d/%y")
+
+#################################################################################
+## Clean data ###################################################################
+#################################################################################
+
+## if IBU is not known, it's reported as zero (it should be NA)
+## challenge: sometimes IBU actually is zero
+
+## identify all beers currently identified as having zero IBU
+zero_ibu <- dat[which(dat$beer_ibu == 0),]$beer_name
+
+## identify beers that are likely to actually have zero IBU (e.g. ciders)
+zero_ibu_updated <- zero_ibu[-which(zero_ibu%in% c("Traditional Dry Cider",
+                                                   "Buzzwig",
+                                                   "Hopped Cidah"))]
+
+## impute IBUS using random forests based on beer category
+imputed_ibus <- randomForest(dat$beer_ibu ~ dat$beer_category)$predicted
+
+## indices of beers for which to update IBU data
+replace_index <- which(dat$beer_name %in% zero_ibu_updated)
+
+## replace selected IBUS
+dat$beer_ibu[replace_index] <- imputed_ibus[replace_index]
+
+#################################################################################
+## Generate Dataset for Primary Analysis ########################################
+#################################################################################
 
 ## create dataset that only includes unique beers
 ## only include most recent report for that beer when counting
@@ -98,6 +131,73 @@ ggplot(category, aes(x = beer_category, y = n, fill = mean_score)) +
 dev.off()
 
 #################################################################################
+## ABV ##########################################################################
+#################################################################################
+
+pdf("results/abv_distribution.pdf", height = 3, width = 5)
+ggplot(dat, aes(beer_abv)) +
+  geom_histogram(fill = "dark blue", col = "gray90", binwidth = 0.5) +
+  xlab("ABV") +
+  ylab("Count") +
+  ggtitle("Distribution of Beer ABV")
+dev.off()
+
+abv <- unique_beers %>%
+  group_by(abv = round(beer_abv)) %>%
+  summarize(mean_score = mean(rating_score),
+            n = length(brewery_name)) %>%
+  ## order from most beers to least beers consumed
+  arrange(desc(n))
+
+## most frequently consumed beer categorories
+pdf("results/abv_count.pdf", height = 5, width = 7)
+## todo fix colors
+ggplot(abv, aes(x = abv, y = n, fill = mean_score)) +
+  geom_bar(stat = "identity") +
+  xlab("") +
+  ylab("Number of Unique Beers") +
+  ggtitle("Beer ABV") +
+  ## only integers on x axis (coordinates are flipped above)
+  scale_y_continuous(breaks = pretty_breaks()) +
+  ## rename legend
+  scale_fill_gradientn(name = "Average\n Beer Rating", colours = rainbow(n = 2))
+dev.off()
+
+#################################################################################
+## IBU ##########################################################################
+#################################################################################
+
+pdf("results/ibu_distribution.pdf", height = 3, width = 5)
+ggplot(dat, aes(beer_ibu)) +
+  geom_histogram(fill = "dark blue", col = "gray90", binwidth = 10) +
+  xlab("ABV") +
+  ylab("Count") +
+  ggtitle("Distribution of Beer IBU")
+dev.off()
+
+## round ibu to the nearest value of ten
+ibu <- unique_beers %>%
+  group_by(ibu = round(beer_ibu, digits = -1)) %>%
+  summarize(mean_score = mean(rating_score),
+            n = length(brewery_name)) %>%
+  ## order with respect to IBU value
+  arrange(ibu)
+
+## most frequently consumed IBU values
+pdf("results/ibu_count.pdf", height = 5, width = 7)
+## todo fix colors
+ggplot(ibu, aes(x = ibu, y = n, fill = mean_score)) +
+  geom_bar(stat = "identity") +
+  xlab("") +
+  ylab("Number of Unique Beers") +
+  ggtitle("Beer IBUs") +
+  ## only integers on x axis (coordinates are flipped above)
+  scale_y_continuous(breaks = pretty_breaks()) +
+  ## rename legend
+  scale_fill_gradientn(name = "Average\n Beer Rating", colours = rainbow(n = 2))
+dev.off()
+
+#################################################################################
 ## Brewery ######################################################################
 #################################################################################
 
@@ -110,12 +210,31 @@ brewery <- unique_beers %>%
   ## order from most beers to least beers consumed
   arrange(desc(n))
 
+## most frequently consumed beer categorories
+pdf("results/brewery_count_over1.pdf", height = 7, width = 7)
+
+## ordered by number of beers
 ## treat brewery_name as a factor, ordered by number of unique beers from that brewery tried
 brewery$brewery_name <- factor(brewery$brewery_name, levels = rev(brewery$brewery_name))
 
-## most frequently consumed beer categorories
-pdf("results/brewery_count_over1.pdf", height = 5, width = 7)
 ggplot(brewery, aes(x = brewery_name, y = n, fill = mean_score)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  xlab("") +
+  ylab("Number of Unique Beers") +
+  ggtitle("Most 'Popular' Breweries\n(with respect to total number of unique beers tasted)") +
+  ## only integers on x axis (coordinates are flipped above)
+  scale_y_continuous(breaks= pretty_breaks()) +
+  ## rename legend
+  scale_fill_gradient2(low = "#0099F7", midpoint = 2.5, name = "Average\n Beer Rating")
+
+## ordered by average beer rating
+## treat brewery_name as a factor, ordered by avarege beer rating of brewery
+brewery$brewery_name <- factor(brewery$brewery_name, 
+                               levels = as.character(brewery$brewery_name)[order(brewery$mean_score)])
+
+ggplot(brewery[order(brewery$mean_score),], 
+       aes(x = brewery_name, y = n, fill = mean_score)) +
   geom_bar(stat = "identity") +
   coord_flip() +
   xlab("") +
@@ -158,40 +277,6 @@ ggplot(country, aes(x = brewery_country, y = n, fill = mean_score)) +
 dev.off()
 
 #################################################################################
-## State ########################################################################
-#################################################################################
-
-## note: variation in mean score is mainly driven by differences across breweries
-
-## states from which I've drank more than one unique beer
-state <- unique_beers %>%
-  ## only look at US states
-  filter(brewery_country == "United States") %>%
-  group_by(brewery_state) %>%
-  summarize(mean_score = mean(rating_score),
-            n = length(brewery_name)) %>%
-  filter(n > 1) %>%
-  ## order from most beers to least beers consumed
-  arrange(desc(n)) 
-
-## maintain order of states, treat as factor to avoid ggplot2 sorting alphabetically
-state$brewery_state <- factor(state$brewery_state, levels = rev(state$brewery_state))
-
-## most frequently consumed beer categorories
-pdf("results/state_count_over1.pdf", height = 5, width = 7)
-ggplot(state, aes(x = brewery_state, y = n, fill = mean_score)) +
-  geom_bar(stat = "identity") +
-  coord_flip() +
-  xlab("") +
-  ylab("Number of Unique Beers") +
-  ggtitle("Most 'Popular' Beer States in US\n(with respect to total number of unique beers tasted)") +
-  ## only integers on x axis (coordinates are flipped above)
-  scale_y_continuous(breaks= pretty_breaks()) +
-  ## rename legend
-  scale_fill_gradient2(low = "#0099F7", midpoint = 2.5, name = "Average\n Beer Rating")
-dev.off()
-
-#################################################################################
 ## Model: Beer Type #############################################################
 #################################################################################
 
@@ -200,8 +285,11 @@ unique_beers$beer_category_groups <- factor(unique_beers$beer_category_groups)
 unique_beers <- within(unique_beers, beer_category_groups <- relevel(beer_category_groups, ref = "IPA"))
 
 ## full model
-full_model_category <- glm(rating_score ~ beer_category_groups + log(beer_ibu + 0.001) + beer_abv,
-                       dat = unique_beers)
+## note: as of October 9, 2017, there is a quadratic relationship between IBU and rating,
+## but no quadratic relationship between ABV and rating
+full_model_category <- glm(rating_score ~ beer_category_groups + beer_ibu + I(beer_ibu^2) + 
+                             beer_abv,
+                           dat = unique_beers)
 
 ## beer categories only model
 category_model <- glm(rating_score ~ beer_category_groups,
@@ -243,6 +331,10 @@ category_variables[which(category_variables$model_name == "Beer Category Model")
 # Specify the width of your confidence intervals
 interval <- -qnorm((1-0.95)/2)  # 95% multiplier
 
+#################################################################################
+## Plot Results: Coefficients for Beer Type #####################################
+#################################################################################
+
 pdf("results/beer_type_effects.pdf", height = 4, width = 7)
 ggplot(category_variables, aes(colour = model_name)) +
   geom_hline(yintercept = 0, colour = gray(1/2), lty = 2) +
@@ -256,3 +348,20 @@ ggplot(category_variables, aes(colour = model_name)) +
   scale_colour_discrete(name = "Model Name")
 dev.off()
 
+#################################################################################
+## Plot Results: Coefficients for IBU ###########################################
+#################################################################################
+
+ibu_sim <- seq(from = 0, to = 0.9*max(dat$beer_ibu), by = 1)
+
+## generate notional dataset
+sim_dat <- cbind.data.frame(beer_category_groups = "IPA",
+                            beer_ibu = ibu_sim,
+                            beer_abv = mean(dat$beer_abv))
+
+predict_by_ibu <- cbind.data.frame(ibu = ibu_sim,
+                                   pred = predict(full_model_category, sim_dat))
+
+plot(x = predict_by_ibu$ibu, y = predict_by_ibu$pred, type = "l",
+     xlab = "IBU", ylab = "Predicted Score",
+     main = "Predicted Score for an IPA by Beer IBU")
