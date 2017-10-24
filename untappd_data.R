@@ -80,8 +80,7 @@ zero_ibu <- dat[which(dat$beer_ibu == 0),]$beer_name
 
 ## identify beers that are likely to actually have zero IBU (e.g. ciders)
 zero_ibu_updated <- zero_ibu[-which(zero_ibu%in% c("Traditional Dry Cider",
-                                                   "Buzzwig",
-                                                   "Hopped Cidah"))]
+                                                   "Buzzwig"))]
 
 ## impute IBUS using random forests based on beer category
 imputed_ibus <- randomForest(dat$beer_ibu ~ dat$beer_category)$predicted
@@ -179,6 +178,8 @@ dev.off()
 ibu <- unique_beers %>%
   group_by(ibu = round(beer_ibu, digits = -1)) %>%
   summarize(mean_score = mean(rating_score),
+            sd_score = sd(rating_score),
+            ci_score_95 = 1.96*sd_score,
             n = length(brewery_name)) %>%
   ## order with respect to IBU value
   arrange(ibu)
@@ -196,6 +197,15 @@ ggplot(ibu, aes(x = ibu, y = n, fill = mean_score)) +
   ## rename legend
   scale_fill_gradientn(name = "Average\n Beer Rating", colours = rainbow(n = 2))
 dev.off()
+
+ggplot(ibu[which(ibu$n>3),], aes(x = ibu, y = mean_score)) +
+  geom_line() +
+  geom_errorbar(aes(ymin = mean_score - ci_score_95,
+                    ymax = mean_score + ci_score_95), 
+                width = .1) +
+  xlab("IBU") +
+  ylab("Average Rating") +
+  ggtitle("Average Beer Ratings by IBU") 
 
 #################################################################################
 ## Brewery ######################################################################
